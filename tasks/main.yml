@@ -1,0 +1,94 @@
+---
+- name: set role/group map
+  set_fact:
+    role_map: "{{ role_map | default({}) | combine(
+      { item.1: (role_map[item.1] if role_map is defined and item.1 in role_map else []) | union([item.0.name]) }
+      if item.0.state | default('present') == 'present' else {}
+    ) }}"
+  with_subelements:
+    - "{{ users_groups }}"
+    - roles
+    - skip_missing: true
+
+- name: set group membership - roles
+  set_fact:
+    group_map: "{{ group_map | default({}) | combine(
+      {item.0.name: (group_map[item.0.name] if group_map is defined and item.0.name in group_map else []) | union(role_map[item.1] | default([]))}
+      if item.1 in role_map else {}
+    ) }}"
+  with_subelements:
+    - "{{ users_list }}"
+    - roles
+    - skip_missing: true
+
+- name: set group membership - users
+  set_fact:
+    group_map: "{{ group_map | combine(
+      {item.1: (group_map[item.1] if group_map is defined and item.1 in group_map else []) | union([item.0.name])}
+      if item.0.state | default('present') == 'present' else {}
+    ) }}"
+  with_subelements:
+    - "{{ users_groups }}"
+    - users
+    - skip_missing: true
+
+- name: manage user groups
+  group:
+    name: "{{ item.name }}"
+    system: "{{ item.system | default(omit) }}"
+    gid: "{{ item.gid | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+  with_items:
+    - "{{ users_groups }}"
+  when: item.name is defined and item.name
+
+- name: manage group-assigned user accounts
+  user:
+    name: "{{ item.name }}"
+    uid: "{{ item.uid | default(omit) }}"
+    group: "{{ item.group | default(omit) }}"
+    groups: "{{ group_map[item.name] | default([]) | join(',') }}"
+    state: "{{ 'absent' if item.name not in group_map else item.state | default('present') }}"
+    comment: "{{ item.comment | default(omit) }}"
+    password: "{{ item.password | default(omit) }}"
+    system: "{{ item.system | default(omit) }}"
+    shell: "{{ item.shell | default(users_default_shell) }}"
+    home: "{{ item.home | default(omit) }}"
+    createhome: "{{ item.createhome | default(omit) }}"
+    move_home: "{{ item.move_home | default(omit) }}"
+    skeleton: "{{ item.skeleton | default(omit) }}"
+    expires: "{{ item.expires | default(omit) }}"
+    remove: "{{ item.remove | default(omit) }}"
+    force: "{{ item.force | default(omit) }}"
+    generate_ssh_key: "{{ item.generate_ssh_key | default(omit) }}"
+    ssh_key_bits: "{{ item.ssh_key_bits | default(omit) }}"
+    ssh_key_comment: "{{ item.ssh_key_comment | default(omit) }}"
+    ssh_key_file: "{{ item.ssh_key_file | default(omit) }}"
+    ssh_key_passphrase: "{{ item.ssh_key_passphrase | default(omit) }}"
+    ssh_key_type: "{{ item.ssh_key_type | default(omit) }}"
+  with_items:
+    - "{{ users_list }}"
+  when: item.name is defined and item.name and item.name != 'root'
+
+- name: manage authorized_keys
+  authorized_key:
+    key: "{{ item.authorized_keys | default([]) | join('\n') if item.authorized_keys is defined else '' }}"
+    state: present
+    user: "{{ item.name }}"
+    exclusive: "{{ item.authorized_keys is defined and item.authorized_keys | length == 0 }}"
+  with_flattened:
+    - "{{ users_list }}"
+    - "{{ users_root }}"
+  when: item.name is defined and item.name
+        and (item.name not in users_list|map(attribute='name')|list or
+            (item.name in users_list|map(attribute='name')|list and item.name in group_map))
+        and (item.state | default('present') == 'present')
+        and (item.createhome is undefined or item.createhome)
+
+- name: manage deleted user accounts
+  user:
+    name: "{{ item.name }}"
+    state: absent
+    remove: "{{ item.remove | default(omit) }}"
+  with_items:
+    - "{{ users_deleted }}"

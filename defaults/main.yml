@@ -1,0 +1,11 @@
+---
+users_list: []
+
+users_root:
+  - name: root
+
+users_groups: []
+
+users_deleted: []
+
+users_default_shell: /bin/bash
